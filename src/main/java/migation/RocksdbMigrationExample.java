@@ -47,6 +47,8 @@ public class RocksdbMigrationExample {
 
         // Drop Column Family 1
         db.dropColumnFamily(cf1);
+        db.flush(new FlushOptions());
+        db.compactRange();
 
         // Iterate through the existing data in Column Family 2
         RocksIterator it2 = db.newIterator(cf2);
