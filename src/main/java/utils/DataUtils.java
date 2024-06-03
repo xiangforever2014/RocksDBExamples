@@ -6,10 +6,11 @@ import org.rocksdb.RocksDBException;
 import org.rocksdb.RocksIterator;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.function.Function;
 
 public class DataUtils {
-	public static final long DATA_NUM = 20000000;
+	public static final long DATA_NUM = 2000000;
 //	public static final long DATA_NUM = 1024 * 1024 * 1024; // 1GB data size
 
 	public static boolean checkMigationResult(RocksDB db, ColumnFamilyHandle cf, long dataSize) {
@@ -51,6 +52,40 @@ public class DataUtils {
 		}
 	}
 
+	public static boolean checkOldDataHasBeenRemoved(RocksDB db, ColumnFamilyHandle cf, long dataSize) {
+		String keyPrefix = "key_";
+		int digits = (int)(Math.log10(dataSize) + 1);
+		Function<Integer, String> checkKeyFunc = id -> keyPrefix + String.format("%0" + digits + "d", id);
+
+		System.out.println("Start to check data...");
+		long start = System.currentTimeMillis();
+		try (RocksIterator it = db.newIterator(cf)) {
+			it.seekToFirst();
+			int index = 0;
+			while (it.isValid()) {
+				byte[] value = db.get(checkKeyFunc.apply(index).getBytes());
+				if (value != null) {
+					System.out.println("Key [" + checkKeyFunc.apply(index) + "] is not removed");
+					System.out.println("Value: " + new String(value, StandardCharsets.UTF_8));
+					return false;
+
+				}
+				index++;
+				it.next();
+			}
+			if (index != dataSize) {
+				System.out.println("Data number is not equal to dataSize");
+				return false;
+			}
+			long end = System.currentTimeMillis();
+			System.out.println("Check data finished, it cost " + (end - start) / 1000.0 + " ms.");
+
+			return true;
+		} catch (RocksDBException e) {
+			throw new RuntimeException(e);
+		}
+	}
+
 	public static void iterRocksdbDataAndPrint(RocksDB db, ColumnFamilyHandle cf) {
 		try (RocksIterator iter = db.newIterator(cf)) {
 			// Iterate through the existing data in Column Family 1
@@ -78,5 +113,22 @@ public class DataUtils {
 		}
 		long end = System.currentTimeMillis();
 		System.out.println("Write data to db finished, it cost " + (end - start) / 1000 + " seconds.");
+	}
+
+	public static long getRecordNumberOfCf(RocksDB db, ColumnFamilyHandle cf) throws RocksDBException {
+		long start = System.currentTimeMillis();
+		long dataNumInColumnFamily = 0;
+		try (
+			RocksIterator iter = db.newIterator(cf)) {
+			iter.seekToFirst();
+			while (iter.isValid()) {
+				dataNumInColumnFamily++;
+				iter.next();
+			}
+		}
+		System.out.println("Data number in " + new String(cf.getName(), StandardCharsets.UTF_8) + " is [" + dataNumInColumnFamily + "]");
+		long end = System.currentTimeMillis();
+		System.out.println("Get record number of cf finished, it cost " + (end - start) + " milliseconds.");
+		return dataNumInColumnFamily;
 	}
 }

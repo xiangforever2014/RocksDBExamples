@@ -36,7 +36,16 @@ public class IteratorAndMigration {
 				WriteBatch batch = new WriteBatch()) {
 				it.seekToFirst();
 
+				byte[] bytes0 = db.get(cf1, "key_1000000".getBytes());
+				if(bytes0 == null) {
+					System.out.println("key_1000000 not found in cf1");
+				} else{
+					System.out.println("Get value of key_1000000: " + new String(bytes0, StandardCharsets.UTF_8));
+				}
 
+				System.out.println("cf1 = " + cf1);
+				System.out.println("cf1.getNativeHandle() = " + cf1.getNativeHandle());
+				DataUtils.getRecordNumberOfCf(db, cf1);
 				System.out.println("Start to drop cf1...");
 				long startDrop = System.currentTimeMillis();
 				System.out.println("drop cf1");
@@ -48,6 +57,25 @@ public class IteratorAndMigration {
 				System.out.println("Drop cf1 finished, time elapsed: " + (endDrop - startDrop) + " ms");
 
 				columnFamily = db.createColumnFamily(new ColumnFamilyDescriptor("cf1".getBytes(), new ColumnFamilyOptions()));
+
+				System.out.println("new cf1 = " + columnFamily);
+				System.out.println("new cf1.getNativeHandle() = " + columnFamily.getNativeHandle());
+
+				DataUtils.getRecordNumberOfCf(db, columnFamily);
+
+				byte[] bytes = db.get(columnFamily, "key_1000000".getBytes());
+				if(bytes == null) {
+					System.out.println("key_1000000 not found in cf1");
+				} else{
+					System.out.println("Get value of key_1000000: " + new String(bytes, StandardCharsets.UTF_8));
+				}
+
+				byte[] bytes1 = db.get(cf1, "key_1000000".getBytes());
+				if(bytes == null) {
+					System.out.println("key_1000000 not found in cf1");
+				} else{
+					System.out.println("Get value of key_1000000: " + new String(bytes1, StandardCharsets.UTF_8));
+				}
 
 				System.out.println("Start to migrate data...");
 				long startMigration = System.currentTimeMillis();
@@ -67,6 +95,7 @@ public class IteratorAndMigration {
 
 				long endMigration = System.currentTimeMillis();
 				System.out.println("Migrate data finished, it cost " + (endMigration - startMigration) / 1000 + " seconds.");
+				DataUtils.getRecordNumberOfCf(db, columnFamily);
 			}
 
 			System.out.println("Start to check migration result...");

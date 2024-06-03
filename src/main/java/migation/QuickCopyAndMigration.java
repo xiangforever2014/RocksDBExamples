@@ -18,6 +18,7 @@ import utils.FileUtils;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 
 public class QuickCopyAndMigration {
 	public static void main(String[] args) throws RocksDBException {
@@ -47,22 +48,48 @@ public class QuickCopyAndMigration {
 				new ImportColumnFamilyOptions(),
 				exportImportFilesMetaData);
 			long endCopyTime = System.currentTimeMillis();
-			System.out.println("Quick copy data from cf1 to cf2 time: " + (endCopyTime - startCopyTime) / 1000 + " seconds.");
+			System.out.println("Quick copy data from cf1 to cf2 time: " + (endCopyTime - startCopyTime) + " ms.");
 
-			// Drop Column Family 1
-			System.out.println("Start to drop cf1...");
+			// Delete data in Column Family 1
+			System.out.println("Start to delete data in cf1...");
 			long startTime2 = System.currentTimeMillis();
-			db.dropColumnFamily(cf1);
+			try (RocksIterator it = db.newIterator(cf1)) {
+				byte[] startKey = null;
+				byte[] endKey = null;
+
+				// Calculate the lower bound of the range to delete
+				it.seekToFirst();
+				if (it.isValid()) {
+					startKey = it.key();
+				}
+
+				// Calculate the upper bound of the range to delete
+				it.seekToLast();
+				if (it.isValid()) {
+					endKey = it.key();
+				}
+
+				Optional<byte[]> upperBound = calculateUpperBound(endKey);
+				if (!upperBound.isPresent()) {
+					System.out.println("calculate upper bound failed.");
+					return;
+				}
+
+				System.out.println("start key = " + new String(startKey, StandardCharsets.UTF_8));
+				System.out.println("end key = " + new String(endKey, StandardCharsets.UTF_8));
+				System.out.println("upper bound = " + new String(upperBound.get(), StandardCharsets.UTF_8));
+
+				db.deleteRange(startKey, upperBound.get());
+				db.compactRange(cf1);
+			}
 			long endTime2 = System.currentTimeMillis();
-			System.out.println("drop cf1 time: " + (endTime2 - startTime2) + " ms.");
+			System.out.println("delete range of cf1 time: " + (endTime2 - startTime2) + " ms.");
 
 			// Migrate data from Column Family 2 to Column Family 1
 			System.out.println("Start migrate data from cf2 to cf1...");
 			long startTime = System.currentTimeMillis();
 			try (RocksIterator it = db.newIterator(columnFamilyWithImport);
-				 WriteBatch batch = new WriteBatch();
-				 ColumnFamilyHandle columnFamilyHandle = db.createColumnFamily(new ColumnFamilyDescriptor("cf1".getBytes(), new ColumnFamilyOptions()));
-			) {
+				 WriteBatch batch = new WriteBatch()) {
 				// Iterate through the existing data in Column Family 1
 				it.seekToFirst();
 				it.seekToLast();
@@ -70,15 +97,15 @@ public class QuickCopyAndMigration {
 					// Put the key-value pairs to Column Family 2
 					String migratedKey = "migrated_" + new String(it.key(), StandardCharsets.UTF_8);
 					String migratedValue = "migrated_" + new String(it.value(), StandardCharsets.UTF_8);
-					batch.put(columnFamilyHandle, migratedKey.getBytes(), migratedValue.getBytes());
+					batch.put(cf1, migratedKey.getBytes(), migratedValue.getBytes());
 					it.next();
 				}
 				// Write the key-value pairs to Column Family 2
 				db.write(new WriteOptions(), batch);
 				db.flush(new FlushOptions());
-				db.compactRange(columnFamilyHandle);
+				db.compactRange(cf1);
 				long endTime = System.currentTimeMillis();
-				System.out.println("Migrate data from cf1 to cf2 time: " + (endTime - startTime) / 1000 + " seconds.");
+				System.out.println("Migrate data from cf1 to cf2 time: " + (endTime - startTime) / 1000.0 + " seconds.");
 
 				// Drop Column Family 2
 				System.out.println("Start to drop cf2...");
@@ -89,8 +116,24 @@ public class QuickCopyAndMigration {
 
 				// DataUtils.iterRocksdbDataAndPrint(db, columnFamily);
 				System.out.println("Start to check migration result...");
-				System.out.println("Migration result -> " + DataUtils.checkMigationResult(db, columnFamilyHandle, DataUtils.DATA_NUM));
+				System.out.println("Migration result -> " + DataUtils.checkMigationResult(db, cf1, DataUtils.DATA_NUM));
 			}
 		}
+	}
+
+	private static Optional<byte[]> calculateUpperBound(byte[] prefix) {
+		byte[] upperBound = new byte[prefix.length];
+		System.arraycopy(prefix, 0, upperBound, 0, prefix.length);
+		boolean overFlow = true;
+		for (int i = prefix.length - 1; i >= 0; i--) {
+			int unsignedValue = prefix[i] & 0xff;
+			int result = unsignedValue + 1;
+			upperBound[i] = (byte) (result & 0xff);
+			if (result >> 8 == 0) {
+				overFlow = false;
+				break;
+			}
+		}
+		return overFlow ? Optional.empty() : Optional.of(upperBound);
 	}
 }
